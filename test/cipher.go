@@ -7,6 +7,7 @@ import (
 	"github.com/dedis/crypto/abstract"
 	"github.com/dedis/crypto/subtle"
 	"hash"
+	"math"
 	"testing"
 )
 
@@ -200,7 +201,7 @@ func AuthenticateAndEncrypt(t *testing.T,
 			mac = make([]byte, hashsize)
 			bc.Message(nmacs[j], mac, nil)
 			if subtle.ConstantTimeAllEq(mac, 0) != 1 {
-				t.Log("MAC Check passed")
+				t.Log("MAC Check failed")
 				t.FailNow()
 			}
 		}
@@ -274,6 +275,25 @@ func AuthenticateAndEncrypt(t *testing.T,
 	}
 }
 
+func CipherPRNG(t *testing.T,
+	newCipher func([]byte, ...interface{}) abstract.Cipher,
+	randdiff float64) {
+	bc := newCipher(nil)
+	var counters [256]int
+	dst := make([]byte, 1)
+	for i := 0; i < 2^20; i++ {
+		bc.Message(dst, nil, dst)
+		counters[int(dst[0])]++
+	}
+	for _, c := range counters {
+		d := math.Abs(float64(c) - 256)
+		if d > ((1+randdiff)*256) || d < (1-randdiff)*256 {
+			t.Log("Cipher not random enough")
+			t.FailNow()
+		}
+	}
+}
+
 // Iterate through various sized messages and verify
 // that encryption and authentication work
 func BCAuthenticatedEncryptionHelper(t *testing.T,
@@ -300,6 +320,8 @@ func BlockCipherTest(t *testing.T,
 	newCipher func([]byte, ...interface{}) abstract.Cipher) {
 	n := 5
 	bitdiff := .35
+	randdiff := 0.1
 	BCHelloWorldHelper(t, newCipher, n, bitdiff)
 	BCAuthenticatedEncryptionHelper(t, newCipher, n, bitdiff)
+	CipherPRNG(t, newCipher, randdiff)
 }
