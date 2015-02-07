@@ -294,6 +294,38 @@ func CipherPRNG(t *testing.T,
 	}
 }
 
+func PartialTest(t *testing.T,
+	newCipher func([]byte, ...interface{}) abstract.Cipher,
+	text []byte) {
+	bc := newCipher(nil)
+	key := make([]byte, bc.KeySize())
+	rand.Read(key)
+	mac1 := make([]byte, bc.HashSize())
+	mac2 := make([]byte, bc.HashSize())
+	bc = newCipher(key)
+	dst1 := make([]byte, len(text))
+	dst2 := make([]byte, len(text))
+	clen := len(text)
+	end := clen - 8
+	bc.Message(dst1, text, dst1)
+	bc.Message(mac1, nil, nil)
+
+	bc = newCipher(key)
+	for i := 0; i < end; i += 8 {
+		bc.Partial(dst2[i:i+8], text[i:i+8], dst2[i:i+8])
+	}
+	bc.Message(dst2[end:], text[end:], dst2[end:])
+	bc.Message(mac2, nil, nil)
+	if !bytes.Equal(dst1, dst2) {
+		t.Log("Partial != Message")
+		t.FailNow()
+	}
+	if !bytes.Equal(mac1, mac2) {
+		t.Log("Partial MAC != Message MAC")
+		t.FailNow()
+	}
+}
+
 // Iterate through various sized messages and verify
 // that encryption and authentication work
 func BCAuthenticatedEncryptionHelper(t *testing.T,
@@ -314,6 +346,7 @@ func BCAuthenticatedEncryptionHelper(t *testing.T,
 		mb[i] = byte(i & 256)
 	}
 	AuthenticateAndEncrypt(t, newCipher, n, bitdiff, mb)
+	PartialTest(t, newCipher, kb)
 }
 
 func BlockCipherTest(t *testing.T,
