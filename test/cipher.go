@@ -331,22 +331,85 @@ func PartialTest(t *testing.T,
 func BCAuthenticatedEncryptionHelper(t *testing.T,
 	newCipher func([]byte, ...interface{}) abstract.Cipher,
 	n int, bitdiff float64) {
-	AuthenticateAndEncrypt(t, newCipher, n, bitdiff, []byte{})
-	AuthenticateAndEncrypt(t, newCipher, n, bitdiff, []byte{'a'})
-	AuthenticateAndEncrypt(t, newCipher, n, bitdiff, []byte("Hello, World"))
-
-	kb := make([]byte, 2^10)
-	for i := 0; i < len(kb); i++ {
-		kb[i] = byte(i & 256)
+	messages := make([][]byte, 5)
+	messages[0] = []byte{}
+	messages[1] = []byte{'a'}
+	messages[2] = []byte("Hello, World")
+	messages[3] = make([]byte, 1<<10)
+	for i := 0; i < 1<<10; i++ {
+		messages[3][i] = byte(i & 256)
 	}
-	AuthenticateAndEncrypt(t, newCipher, n, bitdiff, kb)
-
-	mb := make([]byte, 2^20)
-	for i := 0; i < len(mb); i++ {
-		mb[i] = byte(i & 256)
+	messages[4] = make([]byte, 1<<20)
+	for i := 0; i < 1<<20; i++ {
+		messages[4][i] = byte(i & 256)
 	}
-	AuthenticateAndEncrypt(t, newCipher, n, bitdiff, mb)
-	PartialTest(t, newCipher, kb)
+	for i := 0; i < 5; i++ {
+		AuthenticateAndEncrypt(t, newCipher, n, bitdiff, messages[i])
+	}
+	PartialTest(t, newCipher, messages[3])
+	MultipleMessages(t, newCipher, messages)
+}
+
+func MultipleMessages(t *testing.T,
+	newCipher func([]byte, ...interface{}) abstract.Cipher,
+	messages [][]byte) {
+	encrypted := make([][]byte, len(messages))
+	macs := make([][]byte, len(messages))
+	bc := newCipher(nil)
+	hashsize := bc.HashSize()
+	keysize := bc.KeySize()
+	key := make([]byte, keysize)
+	rand.Read(key)
+
+	// encrypt and find the macs
+	bc = newCipher(key)
+	for i := 0; i < len(messages); i++ {
+		encrypted[i] = make([]byte, len(messages[i]))
+		macs[i] = make([]byte, hashsize)
+		bc.Message(encrypted[i], messages[i], encrypted[i])
+		macs[i] = make([]byte, hashsize)
+		bc.Message(macs[i], nil, nil)
+	}
+
+	// decrypt and verify macs
+	bc = newCipher(key)
+	for i := 0; i < len(messages); i++ {
+		decrypted := make([]byte, len(messages[i]))
+		macResult := make([]byte, hashsize)
+		bc.Message(decrypted, encrypted[i], encrypted[i])
+		bc.Message(macResult, macs[i], nil)
+		if subtle.ConstantTimeAllEq(macResult, 0) != 1 {
+			t.Log("Invalid MAC")
+			t.FailNow()
+		}
+		if !bytes.Equal(messages[i], decrypted) {
+			t.Log("Encryption / Decryption failed", i)
+			t.FailNow()
+		}
+	}
+}
+
+func StreamInv(t *testing.T,
+	newCipher func([]byte, ...interface{}) abstract.Cipher) {
+	c := newCipher(nil)
+	key := make([]byte, c.KeySize())
+	rand.Read(key)
+	m1 := make([]byte, 256)
+	m2 := make([]byte, 256)
+	d1 := make([]byte, 256)
+	d2 := make([]byte, 256)
+	rand.Read(m1)
+	rand.Read(m2)
+	c = newCipher(key)
+	c.Partial(d1, m1, key)
+	c = newCipher(key)
+	c.Partial(d2, m2, nil)
+	for i := 0; i < 256; i++ {
+		if d1[i]^d2[i] != m1[i]^m2[i] {
+			t.Log("Xor invariant fails")
+			t.FailNow()
+		}
+	}
 }
 
 func BlockCipherTest(t *testing.T,
@@ -357,4 +420,5 @@ func BlockCipherTest(t *testing.T,
 	BCHelloWorldHelper(t, newCipher, n, bitdiff)
 	BCAuthenticatedEncryptionHelper(t, newCipher, n, bitdiff)
 	CipherPRNG(t, newCipher, randdiff)
+	StreamInv(t, newCipher)
 }
